@@ -13,6 +13,7 @@
 #include "config.h"
 #include "server.h"
 #include "utils.h"
+#include "packet.h"
 
 void *server_loop_main(void *wid){
     int worker_id = *(int *)wid;
@@ -48,8 +49,14 @@ void *server_loop_main(void *wid){
     
     struct sockaddr *addrptr = (struct sockaddr *)&addr;
     
-    
+    /* Query Buffers */
     uint8_t buf[INCOMING_PACKET_SIZE];
+    uintptr_t question_count;
+    uintptr_t response_count;
+    uintptr_t position;
+    char *question_hostname;
+    struct dns_query *query_attr;
+    
     while (1) {
         int rsize = ::recvfrom(fd, buf, INCOMING_PACKET_SIZE, 0, addrptr, &cached_addrlen);
         if(rsize < 0){
@@ -61,11 +68,35 @@ void *server_loop_main(void *wid){
             LOG(ERROR) << "recvfrom() failed, " << strerror(errno);
         }
         
+        struct dns_packet *packet = DNS_PACKET(buf);
+        
+        question_count = ntohs(packet->question_count);
+        response_count = 0;
+
 #ifdef DEBUG
         LOG(VERBOSE) << "Received a packet from " << ip2str(addrptr);
         print_bytes(rsize, buf);
-        LOG(VERBOSE) << "====================";
+        LOG(VERBOSE) << "TxID:" << packet->id << " Flags:" << packet->flags << " QCount:" << ntohs(packet->question_count);
 #endif
+
+        for (int i = 0; i < question_count; i++) {
+            DNS_NEXT_QUESTION(packet->dns_data,position,question_hostname,query_attr);
+
+            LOG(VERBOSE) << "Question #" << i << " " << question_hostname << " Type: " << ntohs(query_attr->type);
+
+            //response_count++;
+        }
+        
+        if(!response_count){
+            packet->flags = DNS_FLAGS_NXDOMAIN;
+        }else{
+            packet->flags = DNS_FLAGS_OK;
+        }
+        
+        
+        ::sendto(fd, buf, rsize, 0, addrptr, cached_addrlen);
+        
+        LOG(VERBOSE) << "====================";
         
     }
     
